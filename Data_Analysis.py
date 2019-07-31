@@ -6,7 +6,7 @@
 	Analyzes the data collected from the Arduino and performs preliminary statistics on the features.
 	A number of different machine learning models are considered using k-folds on a train, validation, and test set. Through initial investigations a decision tree was found to be an optimal design, especially after using SMOTE to over sample the fall data to give the models an even distribution of falling vs not falling. The results of a DT for the validation and test sets are then shown in a confusion matrix
 	   
-	   Last updated 12/20/18
+	   Last updated 1/20/19
 '''
 # Load libraries
 from pandas.plotting import scatter_matrix
@@ -30,21 +30,21 @@ from sklearn import preprocessing, model_selection
 from sklearn.metrics import roc_curve, auc
 from sklearn.tree import export_graphviz
 from sklearn.ensemble import GradientBoostingClassifier
+import xgboost as xgb
 
 
-seed = 10                           # sets the random seed value
+seed = 12                           # sets the random seed value
 trees = 5
+depth = 8
 
 # load dataset
-#columns = ["num", "dx", "dy", "dz","ddx", "ddy", "ddz","dddx", "dddy", "dddz", "accelx", "accely", "accelz", "danger"]
-dataset = pd.read_csv("C:\Users\dreifuerstrm\SeniorDesign\Code\Arduino\All_Data.csv")
-dataset = dataset.drop(["Num"], axis=1)
+
+dataset = pd.read_csv(r"C:\Users\Ryan_Dreifuerst\BT5_Dev\Data\All_Data.csv")
 dataset = dataset.apply(pd.to_numeric)
 print(dataset.head())
 #new_dataset = SelectKBest(k=6).fit_transform(dataset.drop(['danger'], axis=1), dataset.danger)
 #print(pd.DataFrame(new_dataset).head())
 
-dataset = dataset.drop(["dddx", "dddy", "dddz","ddx", "ddy", "ddz"], axis = 1)
 names = dataset.columns
 print(names)
 
@@ -52,17 +52,17 @@ print(names)
 max_abs_scaler = MinMaxScaler()
 dataset = max_abs_scaler.fit_transform(dataset)
 dataset = pd.DataFrame(dataset, columns=names)
-print(dataset.head())
+#print(dataset.head())
 '''
 
 
-graphs = raw_input("would you like graphs? 1 = yes, else no")
+graphs = input(r"would you like graphs? 1 = yes, else no")
 if graphs == '1':
     #basic statistics for the dataset
     print(dataset.describe())
 
     # box and whisker plots of each variable
-    dataset.plot(kind = 'box', subplots=True, layout = (4,4), sharex=False, sharey = False)
+    dataset.plot(kind = 'box', subplots=True, layout = (5,4), sharex=False, sharey = False)
     plt.show()
 
     # histogram
@@ -74,31 +74,42 @@ if graphs == '1':
     plt.show()
 
 # split the datat into training and testing
-x = dataset.drop(['danger'], axis = 1)
+x = dataset.drop(['Danger'], axis = 1)
 col = x.columns
-y = dataset.danger
+y = dataset.Danger
 
 
-validation_size = 0.20             # 20% test size
+validation_size = 0.15             # 15% test size
 x_train, x_test, y_train, y_test = model_selection.train_test_split(x, y, test_size = validation_size, random_state = seed)
-sm = SMOTE(random_state = seed)
-x_train, y_train = sm.fit_resample(x_train, y_train)
+smo = input(r'Would you like oversampling?')
+if(smo == '1'):
+    sm = SMOTE(random_state = seed)
+    x_train, y_train = sm.fit_resample(x_train, y_train)
 x_train, x_valid, y_train, y_valid = model_selection.train_test_split(x_train, y_train, test_size = validation_size, random_state= seed)
 
-seed = 7 # must be reset each time
 scoring = 'accuracy'
 
 models = []
-models.append(('LR', LogisticRegression(solver='lbfgs')))
+models.append(('LR', LogisticRegression(solver='lbfgs', max_iter = 4000)))
 models.append(('LDA', LinearDiscriminantAnalysis()))
 models.append(('KNN', KNeighborsClassifier()))
 models.append(('DT', DecisionTreeClassifier(max_depth=8, min_samples_leaf=8)))
 models.append(('NB', GaussianNB()))
 
-tuning = raw_input('would you like to tune parameters? 1 for yes, else no')
+tuning = input(r'would you like to tune parameters? 1 for yes, else no')
 if(tuning == '1'):
     for i in range(10):
-        models.append(('GBM{},{}'.format((i+2)*18, 2), GradientBoostingClassifier(n_estimators=(i+2)*18, max_depth=2, random_state=seed)))
+        zero = 0.1+i/10.0
+        one = 0.8
+        models.append(('RF{},{}'.format(i+1, i*3), RandomForestClassifier(n_estimators=trees,
+                                                                           max_depth=i+1, min_samples_leaf=(i+1)*3,
+                                                                           random_state=seed,
+                                                                           )))
+'''
+dmatrix = xgb.DMatrix(data=x_train, label=y_train, feature_names=col, )
+d_validation = xgb.DMatrix(data=x_valid, label=y_valid, feature_names=col,)
+d_test = xgb.DMatrix(data=x_test, label=y_test, feature_names=col,)
+'''
 
 
 results = []
@@ -113,18 +124,24 @@ for name, model in models:
     print(msg)
 
 # next decide which is best. Then run a full accuracy score, confusion matrix, and classification report
-clf = RandomForestClassifier(n_estimators=trees, max_depth=6, min_samples_leaf=8, random_state=seed) #, class_weight={0:0.4, 1:0.2})
-#clf = DecisionTreeClassifier( random_state=seed, min_samples_leaf=0.1)
+clf = RandomForestClassifier(n_estimators=trees, max_depth=depth, min_samples_leaf=5, random_state=seed) #, class_weight={0:0.4, 1:0.2})
+'''
+param = {'max_depth' : 7, 'objective' :'binary:logistic', 'n_estimators': trees, 'eval_metric':'auc', }
+evallist = [(d_test, 'eval'), (dmatrix, 'train')]
+clf = xgb.train(param, dmatrix, 10, evallist)
+'''
 clf.fit(x_train, y_train)
 
 print("----------------------Train Results--------------------------")
 pred = clf.predict(x_train)
+#pred = [round(value) for value in pred]
 print(accuracy_score(y_train, pred))
 print(confusion_matrix(y_train, pred))
 print(classification_report(y_train, pred))
 
 print("----------------------Valid Results--------------------------")
 predictions = clf.predict(x_valid)
+#predictions = [round(value) for value in predictions]
 print(accuracy_score(y_valid, predictions))
 print(confusion_matrix(y_valid, predictions))
 print(classification_report(y_valid, predictions))
@@ -132,7 +149,8 @@ print(classification_report(y_valid, predictions))
 
 print("----------------------Test Results--------------------------")
 test_pred = clf.predict(x_test)
-print(model_selection.cross_val_score(clf, x_test, y_test, cv=5))
+#test_pred = [round(value) for value in test_pred]
+print(model_selection.cross_val_score(clf, x_test, y_test, cv=8))
 print(accuracy_score(y_test, test_pred))
 print(confusion_matrix(y_test, test_pred))
 print(classification_report(y_test, test_pred))
@@ -159,7 +177,7 @@ fpr = dict()
 tpr = dict()
 roc_auc = dict()
 for i in range(2):
-    fpr[i], tpr[i], _ = roc_curve(y_train, pred)
+    fpr[i], tpr[i], _ = roc_curve(y_test, test_pred)
     roc_auc[i] = auc(fpr[i], tpr[i])
 
 plt.figure()
@@ -172,29 +190,45 @@ plt.xlim([0.0, 1.0])
 plt.ylim([0.0, 1.05])
 plt.xlabel('False Positive Rate')
 plt.ylabel('True Positive Rate')
-plt.title('Receiver operating characteristic of DT')
+plt.title('Receiver operating characteristic of RF')
 plt.legend(loc="best")
 plt.show()
 
+global brackets
+brackets = 0
+    
 def tree_to_code(tree, feature_names):
     tree_ = tree.tree_
+
     feature_name = [
         feature_names[i] if i != _tree.TREE_UNDEFINED else "undefined!"
         for i in tree_.feature
     ]
-    print "def tree({}):".format(", ".join(feature_names))
+    print("def tree({}):".format(", ".join(feature_names)))
 
-    def recurse(node, depth):
+    def recurse(node, depth, brackets):
         indent = "  " * depth
         if tree_.feature[node] != _tree.TREE_UNDEFINED:
             name = feature_name[node]
-            threshold = tree_.threshold[node]
-            print "{}if {} <= {}:".format(indent, name, threshold)
-            recurse(tree_.children_left[node], depth + 1)
-            print "{}else:  # if {} > {}".format(indent, name, threshold)
-            recurse(tree_.children_right[node], depth + 1)
+            threshold = int(np.round(tree_.threshold[node]))
+            brackets += 1
+            print("{}if({} <= {}) {{".format(indent, name, threshold))
+            recurse(tree_.children_left[node], depth + 1, brackets)
+            print("{}else {{  // if {} > {}".format(indent, name, threshold))
+            recurse(tree_.children_right[node], depth + 1, brackets)
         else:
-            print "{}return {}".format(indent, tree_.value[node])
+            high_val = max(tree_.value[node][0])
+            brackets -= 1
+            print("{}return {}; }}".format(indent, np.where(tree_.value[node][0]==high_val)[0][0]), "\n {}".format(indent))
+    brackets = 0
+    recurse(0, 1, 0)
 
-    recurse(0, 1)
+code = input(r"would you like code? 1 = yes, else no")
+if(code=='1'):
+    for i in range(trees):
+            print("/*********** Tree {} *************/".format(i))
+            tree_to_code(clf.estimators_[i], col)
 
+def predict(xavg, yavg, zavg, dx, dy, dz, x, y, z):
+    print(clf.predict(np.array([xavg, yavg, zavg, dx, dy, dz, x, y, z]).reshape(1, -1)))
+    
